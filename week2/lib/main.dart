@@ -18,7 +18,7 @@ Future<void> main() async {
     );
   }
 
-  print('Firebase initialized: ${Firebase.apps.map((a) => a.name).toList()}');
+  // print('Firebase initialized: ${Firebase.apps.map((a) => a.name).toList()}');
 
   runApp(const MaterialApp(home: Products()));
 }
@@ -360,17 +360,36 @@ class _ProposalsPageState extends State<ProposalsPage> {
   void initState() {
     super.initState();
     _proposalsStream = FirebaseFirestore.instance.collection('proposals').snapshots();
-    _testFetch();
   }
-   Future<void> _testFetch() async {
+
+  Future<void> _deleteDoc(String docId) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm delete'),
+        content: const Text('Are you sure you want to delete this proposal?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
     try {
-      final snap = await FirebaseFirestore.instance.collection('proposals').get();
-      print('testFetch: got ${snap.docs.length} docs');
-      for (var d in snap.docs) print('doc ${d.id}: ${d.data()}');
-    } catch (e, st) {
-      print('Error fetching proposals: $e\n$st');
-      if (e is FirebaseException) print('code=${e.code}, message=${e.message}');
+      await FirebaseFirestore.instance.collection('proposals').doc(docId).delete();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deleted')));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
     }
+  }
+
+  void _openEditPage({String? docId, Map<String, dynamic>? data}) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ProposalEditPage(docId: docId, data: data),
+      ),
+    );
   }
 
   @override
@@ -382,7 +401,10 @@ class _ProposalsPageState extends State<ProposalsPage> {
       ),
       body: Container(
         color: Colors.indigo[100],
-        child: StreamBuilder<QuerySnapshot>(
+        child: Column(
+          children: [
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
                 stream: _proposalsStream,
                 builder: (context, snapshot) {
                   if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
@@ -390,11 +412,11 @@ class _ProposalsPageState extends State<ProposalsPage> {
                   final docs = snapshot.data?.docs ?? [];
                   if (docs.isEmpty) return const Center(child: Text('No proposals found'));
                   return ListView(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
                     children: docs.map((d) {
                       final data = d.data()! as Map<String, dynamic>;
                       final title = data['title'] as String? ?? 'No title';
                       final desc = data['description'] as String? ?? '';
-                      //final image = (data['image'] ?? data['imageUrl']) as String?;
 
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -404,6 +426,7 @@ class _ProposalsPageState extends State<ProposalsPage> {
                           child: Container(
                             padding: const EdgeInsets.all(12),
                             child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Container(
                                   width: 100,
@@ -411,30 +434,197 @@ class _ProposalsPageState extends State<ProposalsPage> {
                                   decoration: BoxDecoration(
                                     color: Colors.indigo[50],
                                     borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: const Icon(Icons.image, size: 40, color: Colors.indigo),
                                   ),
+                                  child: const Icon(Icons.image, size: 40, color: Colors.indigo),
+                                ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(title,
-                                          style: const TextStyle(
-                                              fontSize: 18)),
+                                      Text(title, style: const TextStyle(fontSize: 18)),
                                       const SizedBox(height: 6),
                                       Text(desc, maxLines: 3, overflow: TextOverflow.ellipsis),
                                     ],
                                   ),
                                 ),
-                            ],
+                                Column(
+                                  children: [
+                                    IconButton(
+                                      onPressed: () => _openEditPage(docId: d.id, data: data),
+                                      icon: const Icon(Icons.edit, color: Colors.indigo),
+                                      tooltip: 'Edit',
+                                    ),
+                                    IconButton(
+                                      onPressed: () => _deleteDoc(d.id),
+                                      icon: const Icon(Icons.delete, color: Colors.red),
+                                      tooltip: 'Delete',
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ));
+                      );
                     }).toList(),
                   );
                 },
               ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12.0),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.add),
+                label: const Text('Add Proposal'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color.fromARGB(255, 0, 255, 255),
+                ),
+                onPressed: () => _openEditPage(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class ProposalEditPage extends StatefulWidget {
+  final String? docId;
+  final Map<String, dynamic>? data;
+
+  const ProposalEditPage({super.key, this.docId, this.data});
+
+  @override
+  State<ProposalEditPage> createState() => _ProposalEditPageState();
+}
+
+class _ProposalEditPageState extends State<ProposalEditPage> {
+  late final TextEditingController _titleController;
+  late final TextEditingController _descController;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.data?['title'] as String? ?? '');
+    _descController = TextEditingController(text: widget.data?['description'] as String? ?? '');
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final title = _titleController.text.trim();
+    final desc = _descController.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Title is required')));
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      final col = FirebaseFirestore.instance.collection('proposals');
+      if (widget.docId == null) {
+        await col.add({'title': title, 'description': desc, 'createdAt': FieldValue.serverTimestamp()});
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Added')));
+      } else {
+        await col.doc(widget.docId).update({'title': title, 'description': desc, 'updatedAt': FieldValue.serverTimestamp()});
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Updated')));
+      }
+      Navigator.of(context).pop();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Save failed: $e')));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _deleteIfEditing() async {
+    if (widget.docId == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm delete'),
+        content: const Text('Delete this proposal?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await FirebaseFirestore.instance.collection('proposals').doc(widget.docId).delete();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Deleted')));
+      Navigator.of(context).pop();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEditing = widget.docId != null;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(isEditing ? 'Edit Proposal' : 'New Proposal'),
+        backgroundColor: Colors.indigo,
+        actions: [
+          if (isEditing)
+            IconButton(
+              onPressed: _deleteIfEditing,
+              icon: const Icon(Icons.delete),
+            )
+        ],
+      ),
+      body: Container(
+        color: Colors.indigo[100],
+        padding: const EdgeInsets.all(16.0),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 700),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: _titleController,
+                      decoration: const InputDecoration(labelText: 'Title'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _descController,
+                      decoration: const InputDecoration(labelText: 'Description'),
+                      maxLines: 6,
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: _saving ? null : _save,
+                          child: _saving ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save'),
+                        ),
+                      ],
+                    )
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
